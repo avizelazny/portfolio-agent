@@ -3,7 +3,6 @@ from pathlib import Path
 
 from jinja2 import Template
 
-from src.email_sender import send_report
 from src.models.report import Action, Conviction, RecommendationReport
 from src.utils.config import get_config
 
@@ -145,6 +144,7 @@ def send_email_report(html: str, report: RecommendationReport) -> None:
         f"{len(report.buys())} Buys, {len(report.sells())} Sells"
     )
     try:
+        from src.email_sender import send_report  # optional AWS/SES dependency
         success = send_report(subject=subject, html_body=html)
         if success:
             logger.info("Email sent to %s", cfg.report_recipient_email)

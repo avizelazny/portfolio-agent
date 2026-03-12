@@ -32,6 +32,16 @@ from src.report_renderer import render_html_report, save_report_locally, send_em
 
 logger = logging.getLogger(__name__)
 
+# TA-125 mock universe — tickers that go through the full quant pipeline
+ALL_TICKERS: list[str] = [
+    "TEVA", "NICE", "CHKP", "LUMI", "ICL", "ESLT", "BEZQ", "POLI", "BRMG",
+    "SPNS", "KCHD", "SANO", "AZRG", "AMOT", "IGLD", "ENLT", "NWRL", "MFON",
+    "MTRX", "BIDI", "FIBI", "MISH", "ORION", "RDWR", "PMCN", "CEVA", "GILT",
+]
+
+# Watchlist — tickers monitored but not yet held; tagged [WATCH] in signals
+WATCHLIST_TICKERS: list[str] = ["SMSH"]
+
 
 def check_api_key() -> None:
     """Verify that ANTHROPIC_API_KEY is set in the environment.
@@ -171,8 +181,8 @@ def main() -> None:
     Steps:
         1. Build mock portfolio (stocks + real fund positions).
         2. Fetch live NAV data from funder.co.il.
-        3. Generate synthetic OHLCV data for the TA-125 universe.
-        4. Compute quantitative signals (RSI, MACD, momentum).
+        3. Generate synthetic OHLCV data for the TA-125 universe + watchlist.
+        4. Compute quantitative signals (RSI, MACD, momentum); tag watchlist tickers.
         5. Call Claude API for investment recommendations.
         6. Render HTML report, save locally, and attempt email delivery.
         6b. Mark-to-market open positions via price updater.
@@ -231,14 +241,11 @@ def main() -> None:
         print("      ⚠️  Fund data unavailable")
 
     # Step 3 — market data
-    print("\n[3/6] 📈  Generating market data for TA-125 universe...")
-    all_tickers = [
-        "TEVA", "NICE", "CHKP", "LUMI", "ICL", "ESLT", "BEZQ", "POLI", "BRMG",
-        "SPNS", "KCHD", "SANO", "AZRG", "AMOT", "IGLD", "ENLT", "NWRL", "MFON",
-        "MTRX", "BIDI", "FIBI", "MISH", "ORION", "RDWR", "PMCN", "CEVA", "GILT",
-    ]
-    ohlcv_data = {t: make_ohlcv(t, base=50 + hash(t) % 400, days=60) for t in all_tickers}
-    print(f"      Generated 60 days × {len(all_tickers)} tickers")
+    print("\n[3/6] 📈  Generating market data for TA-125 universe + watchlist...")
+    ohlcv_data = {t: make_ohlcv(t, base=50 + hash(t) % 400, days=60) for t in ALL_TICKERS}
+    watchlist_ohlcv = {t: make_ohlcv(t, base=50 + hash(t) % 400, days=60) for t in WATCHLIST_TICKERS}
+    ohlcv_data.update(watchlist_ohlcv)
+    print(f"      Generated 60 days × {len(ALL_TICKERS)} universe tickers + {len(WATCHLIST_TICKERS)} watchlist")
 
     # Step 4 — quant signals
     print("\n[4/6] 🔢  Computing quant signals (RSI, MACD, momentum)...")
@@ -247,11 +254,19 @@ def main() -> None:
         "Materials": 14.0, "Telecom": 12.0, "Defense": 22.0,
     }
     engine = QuantEngine(sector_pe_medians=sector_pes)
-    tickers_data = {t: {"bars": ohlcv_data[t], "info": None} for t in all_tickers}
+    tickers_data = {t: {"bars": ohlcv_data[t], "info": None} for t in ALL_TICKERS}
+    # Merge watchlist tickers into the same pipeline
+    tickers_data.update({t: {"bars": ohlcv_data[t], "info": None} for t in WATCHLIST_TICKERS})
     signals = engine.compute_all(tickers_data)
+    # Tag watchlist signals so Claude and the dashboard can distinguish them
+    watchlist_set = set(WATCHLIST_TICKERS)
+    for sig in signals:
+        if sig.ticker in watchlist_set:
+            sig.signal_summary = ["[WATCH]"] + sig.signal_summary
     bullish = [s for s in signals if (s.composite_score or 0) > 0.2]
     bearish = [s for s in signals if (s.composite_score or 0) < -0.2]
     print(f"      {len(bullish)} bullish signals, {len(bearish)} bearish signals")
+    print(f"      Watchlist: {', '.join(WATCHLIST_TICKERS)} tagged [WATCH]")
     print(f"      Top 3: {', '.join(f'{s.ticker}({s.composite_score:+.2f})' for s in signals[:3])}")
 
     # Step 5 — Claude Opus 4
