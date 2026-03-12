@@ -5,25 +5,37 @@ A Flask web server that serves a live dashboard.
 Run with:  py -3.12 dashboard.py
 Then open: http://localhost:5000
 """
-import json
-import os
+import logging
+import sys
 import threading
-from datetime import datetime, date
+import traceback
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-from flask import Flask, render_template_string, jsonify, request
+from typing import Any
+
+from flask import Flask, Response, jsonify, render_template_string, request
+
+from demo_run import make_macro, make_ohlcv, make_portfolio
+from src.agent_core import PortfolioAgent
+from src.quant_engine import QuantEngine
+from src.report_renderer import render_html_report, save_report_locally, send_email_report
+
+sys.path.insert(0, str(Path(__file__).parent))
+
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
 # ── In-memory state (populated by demo_run or the live agent) ─────────────────
-state = {
-    "portfolio":       None,
-    "signals":         [],
-    "report":          None,
-    "last_run":        None,
-    "is_running":      False,
-    "run_log":         [],
-    "macro":           None,
+state: dict[str, Any] = {
+    "portfolio":  None,
+    "signals":    [],
+    "report":     None,
+    "last_run":   None,
+    "is_running": False,
+    "run_log":    [],
+    "macro":      None,
 }
 
 # ── Dashboard HTML ─────────────────────────────────────────────────────────────
@@ -492,96 +504,133 @@ setInterval(fetchState, 5000);
 
 # ── API routes ────────────────────────────────────────────────────────────────
 
-def add_log(msg, typ="info"):
+def add_log(msg: str, typ: str = "info") -> None:
+    """Append a timestamped entry to the in-memory run log and emit to logger.
+
+    Args:
+        msg: Human-readable log message.
+        typ: Log level tag shown in the dashboard UI ('info', 'ok', 'warn', 'err').
+    """
     now = datetime.now().strftime("%H:%M:%S")
     state["run_log"].append({"time": now, "msg": msg, "type": typ})
-    print(f"[{now}] {msg}")
+    logger.info("[%s] %s", now, msg)
 
 
-def run_demo_background():
-    """Runs the full demo pipeline in a background thread."""
-    import sys
-    sys.path.insert(0, str(Path(__file__).parent))
+def run_demo_background() -> None:
+    """Run the full demo pipeline in a background thread.
 
+    Builds a mock Israeli portfolio, generates OHLCV data for the TA-125
+    universe, computes quant signals, calls the Claude API for recommendations,
+    renders the HTML report, and attempts email delivery via MailHog.
+    Updates the shared `state` dict throughout so the dashboard can poll progress.
+    """
     try:
         state["is_running"] = True
         state["run_log"] = []
 
         add_log("Building mock Israeli portfolio...", "info")
-        from demo_run import make_portfolio, make_ohlcv, make_macro
         portfolio = make_portfolio()
         state["portfolio"] = portfolio.model_dump(mode="json")
-        add_log(f"Portfolio loaded — ₪{portfolio.total_value_ils:,.0f} | {len(portfolio.holdings)} holdings", "ok")
+        add_log(
+            f"Portfolio loaded — ₪{portfolio.total_value_ils:,.0f} | {len(portfolio.holdings)} holdings",
+            "ok",
+        )
 
         add_log("Generating market data for TA-125 universe...", "info")
         all_tickers = [
-            "TEVA","NICE","CHKP","LUMI","ICL","ESLT","BEZQ","POLI","BRMG",
-            "SPNS","KCHD","SANO","AZRG","AMOT","IGLD","ENLT","NWRL","MFON",
-            "MTRX","BIDI","FIBI","MISH","ORION","RDWR","PMCN","CEVA","GILT"
+            "TEVA", "NICE", "CHKP", "LUMI", "ICL", "ESLT", "BEZQ", "POLI", "BRMG",
+            "SPNS", "KCHD", "SANO", "AZRG", "AMOT", "IGLD", "ENLT", "NWRL", "MFON",
+            "MTRX", "BIDI", "FIBI", "MISH", "ORION", "RDWR", "PMCN", "CEVA", "GILT",
         ]
-        ohlcv_data = {t: make_ohlcv(t, base=50+hash(t)%400, days=60) for t in all_tickers}
+        ohlcv_data = {t: make_ohlcv(t, base=50 + hash(t) % 400, days=60) for t in all_tickers}
         add_log(f"60 days × {len(all_tickers)} tickers generated", "ok")
 
         add_log("Computing quant signals (RSI, MACD, momentum)...", "info")
-        from src.quant_engine import QuantEngine
-        sector_pes = {"Pharma":18.5,"Technology":25.0,"Banks":10.0,"Materials":14.0,"Telecom":12.0,"Defense":22.0}
+        sector_pes = {
+            "Pharma": 18.5, "Technology": 25.0, "Banks": 10.0,
+            "Materials": 14.0, "Telecom": 12.0, "Defense": 22.0,
+        }
         engine = QuantEngine(sector_pe_medians=sector_pes)
-        tickers_data = {t:{"bars":ohlcv_data[t],"info":None} for t in all_tickers}
+        tickers_data = {t: {"bars": ohlcv_data[t], "info": None} for t in all_tickers}
         signals = engine.compute_all(tickers_data)
         state["signals"] = [s.model_dump(mode="json") for s in signals]
         bullish = sum(1 for s in signals if (s.composite_score or 0) > 0.2)
-        add_log(f"{bullish} bullish signals, {len(signals)-bullish} neutral/bearish", "ok")
+        add_log(f"{bullish} bullish signals, {len(signals) - bullish} neutral/bearish", "ok")
 
         macro = make_macro()
         state["macro"] = macro.model_dump(mode="json")
         add_log(f"Macro: BOI {macro.boi_interest_rate}% | USD/ILS {macro.usd_ils_rate}", "ok")
 
         add_log("Calling Claude Opus 4 — this takes ~20 seconds...", "warn")
-        from src.agent_core import PortfolioAgent
-        index_perf = {"ta35":{"change_pct":0.82},"ta125":{"change_pct":0.61}}
+        index_perf = {"ta35": {"change_pct": 0.82}, "ta125": {"change_pct": 0.61}}
         news = [
-            {"source":"Globes","title":"Teva signs $2.3B biosimilar licensing deal","body":"Teva Pharmaceutical announced a landmark licensing agreement for its biosimilar portfolio, expected to generate $400M annually by 2026.","published_at":datetime.now().isoformat(),"tickers_mentioned":["TEVA"]},
-            {"source":"TheMarker","title":"Bank of Israel signals possible rate cut Q2","body":"BOI Governor hinted at potential rate reduction if inflation continues moderating. Banking stocks led gains.","published_at":datetime.now().isoformat(),"tickers_mentioned":["LUMI","POLI","FIBI"]},
-            {"source":"Calcalist","title":"Elbit Systems wins $1.2B IDF drone contract","body":"Elbit secured a major multi-year contract for next-generation drone surveillance systems through 2027.","published_at":datetime.now().isoformat(),"tickers_mentioned":["ESLT"]},
+            {
+                "source": "Globes",
+                "title": "Teva signs $2.3B biosimilar licensing deal",
+                "body": "Teva Pharmaceutical announced a landmark licensing agreement for its biosimilar portfolio, expected to generate $400M annually by 2026.",
+                "published_at": datetime.now().isoformat(),
+                "tickers_mentioned": ["TEVA"],
+            },
+            {
+                "source": "TheMarker",
+                "title": "Bank of Israel signals possible rate cut Q2",
+                "body": "BOI Governor hinted at potential rate reduction if inflation continues moderating. Banking stocks led gains.",
+                "published_at": datetime.now().isoformat(),
+                "tickers_mentioned": ["LUMI", "POLI", "FIBI"],
+            },
+            {
+                "source": "Calcalist",
+                "title": "Elbit Systems wins $1.2B IDF drone contract",
+                "body": "Elbit secured a major multi-year contract for next-generation drone surveillance systems through 2027.",
+                "published_at": datetime.now().isoformat(),
+                "tickers_mentioned": ["ESLT"],
+            },
         ]
         agent = PortfolioAgent()
         report, usage = agent.generate_report(
             portfolio=portfolio, signals=signals, macro=macro,
-            index_perf=index_perf, news_chunks=news, run_type="morning"
+            index_perf=index_perf, news_chunks=news, run_type="morning",
         )
         state["report"] = report.model_dump(mode="json")
-        add_log(f"Claude done! {len(report.recommendations)} recommendations | {usage['prompt_tokens']+usage['completion_tokens']:,} tokens | {usage['duration_s']}s", "ok")
+        add_log(
+            f"Claude done! {len(report.recommendations)} recommendations | "
+            f"{usage['prompt_tokens'] + usage['completion_tokens']:,} tokens | {usage['duration_s']}s",
+            "ok",
+        )
 
-        # Save HTML report
         add_log("Rendering HTML report...", "info")
-        from src.report_renderer import render_html_report, save_report_locally, send_email_report
         html = render_html_report(report, "dashboard-run")
         local_path = save_report_locally(html, report)
         add_log(f"Report saved: {local_path}", "ok")
         try:
             send_email_report(html, report)
             add_log("Email sent to MailHog → http://localhost:8025", "ok")
-        except:
+        except Exception:
             add_log("MailHog not running — email skipped (report saved to file)", "warn")
 
         state["last_run"] = datetime.now().strftime("%H:%M:%S")
         add_log("✅ Demo complete! Dashboard updated.", "ok")
 
     except Exception as e:
-        add_log(f"Error: {str(e)}", "err")
-        import traceback
-        traceback.print_exc()
+        add_log(f"Error: {e}", "err")
+        logger.exception("Unhandled error in demo pipeline")
     finally:
         state["is_running"] = False
 
 
 @app.route("/")
-def index():
+def index() -> str:
+    """Serve the main dashboard HTML page."""
     return render_template_string(DASHBOARD_HTML)
 
 
 @app.route("/api/run", methods=["POST"])
-def api_run():
+def api_run() -> Response:
+    """Start the demo pipeline in a background thread if not already running.
+
+    Returns:
+        JSON with 'started' bool and optional 'reason' if not started.
+    """
     if state["is_running"]:
         return jsonify({"started": False, "reason": "already running"})
     t = threading.Thread(target=run_demo_background, daemon=True)
@@ -589,23 +638,30 @@ def api_run():
     return jsonify({"started": True})
 
 
+@app.route("/health")
+def health() -> tuple[Response, int]:
+    """Return a simple health-check response for load balancer probes."""
+    return jsonify({"status": "ok"}), 200
+
+
 @app.route("/api/state")
-def api_state():
+def api_state() -> Response:
+    """Return the current in-memory agent state as JSON for dashboard polling."""
     return jsonify({
-        "is_running":  state["is_running"],
-        "portfolio":   state["portfolio"],
-        "signals":     state["signals"],
-        "report":      state["report"],
-        "macro":       state["macro"],
-        "last_run":    state["last_run"],
-        "run_log":     state["run_log"],
+        "is_running": state["is_running"],
+        "portfolio":  state["portfolio"],
+        "signals":    state["signals"],
+        "report":     state["report"],
+        "macro":      state["macro"],
+        "last_run":   state["last_run"],
+        "run_log":    state["run_log"],
     })
 
 
 if __name__ == "__main__":
-    print("\n" + "="*55)
+    print("\n" + "=" * 55)
     print("  📊  Portfolio Agent — Web Dashboard")
-    print("="*55)
+    print("=" * 55)
     print()
     print("  Opening at: http://localhost:5000")
     print()
@@ -614,5 +670,5 @@ if __name__ == "__main__":
     print("  3. See recommendations populate in real-time")
     print()
     print("  Press Ctrl+C to stop the server")
-    print("="*55 + "\n")
+    print("=" * 55 + "\n")
     app.run(host="0.0.0.0", port=5000, debug=False)

@@ -1,15 +1,27 @@
-import smtplib, os
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
+import logging
 from pathlib import Path
+
 from jinja2 import Template
-from src.models.report import RecommendationReport, Action, Conviction
+
+from src.email_sender import send_report
+from src.models.report import Action, Conviction, RecommendationReport
 from src.utils.config import get_config
 
-ACTION_COLORS={Action.BUY:"#16a34a",Action.SELL:"#dc2626",Action.HOLD:"#d97706",Action.WATCH:"#2563eb"}
-CONVICTION_COLORS={Conviction.HIGH:"#16a34a",Conviction.MEDIUM:"#d97706",Conviction.LOW:"#6b7280"}
+logger = logging.getLogger(__name__)
 
-TMPL="""<!DOCTYPE html><html><head><meta charset="UTF-8">
+ACTION_COLORS: dict[Action, str] = {
+    Action.BUY: "#16a34a",
+    Action.SELL: "#dc2626",
+    Action.HOLD: "#d97706",
+    Action.WATCH: "#2563eb",
+}
+CONVICTION_COLORS: dict[Conviction, str] = {
+    Conviction.HIGH: "#16a34a",
+    Conviction.MEDIUM: "#d97706",
+    Conviction.LOW: "#6b7280",
+}
+
+TMPL = """<!DOCTYPE html><html><head><meta charset="UTF-8">
 <title>Portfolio Report</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -73,36 +85,70 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <div class="foot">AI-generated · Not financial advice · Review before acting · {{ date_str }}</div>
 </div></body></html>"""
 
+
 def render_html_report(report: RecommendationReport, report_id: str) -> str:
+    """Render a RecommendationReport to an HTML string using the Jinja2 template.
+
+    Args:
+        report: The recommendation report to render.
+        report_id: Unique identifier for this report run (passed to the template).
+
+    Returns:
+        Fully rendered HTML string.
+    """
     return Template(TMPL).render(
-        report=report, date_str=report.report_time.strftime("%Y-%m-%d %H:%M"),
-        ac=ACTION_COLORS, cc=CONVICTION_COLORS, report_id=report_id,
+        report=report,
+        date_str=report.report_time.strftime("%Y-%m-%d %H:%M"),
+        ac=ACTION_COLORS,
+        cc=CONVICTION_COLORS,
+        report_id=report_id,
     )
 
+
 def save_report_locally(html: str, report: RecommendationReport) -> str:
-    date = report.report_time.strftime("%Y-%m-%d")
-    time = report.report_time.strftime("%H%M")
-    out = Path("reports") / date
+    """Save an HTML report to the local reports/ directory.
+
+    Creates subdirectories by date (reports/YYYY-MM-DD/) and writes the file
+    as {run_type}_{HHMM}.html.
+
+    Args:
+        html: Rendered HTML string to write.
+        report: The report object, used for timestamp and run_type in the filename.
+
+    Returns:
+        Absolute path of the saved file as a string.
+    """
+    date_str = report.report_time.strftime("%Y-%m-%d")
+    time_str = report.report_time.strftime("%H%M")
+    out = Path("reports") / date_str
     out.mkdir(parents=True, exist_ok=True)
-    path = out / f"{report.run_type}_{time}.html"
+    path = out / f"{report.run_type}_{time_str}.html"
     path.write_text(html, encoding="utf-8")
-    print(f"\n  📄 Report saved: {path.resolve()}")
-    print(f"     Open that file in your browser to view the full report!\n")
+    logger.info("Report saved: %s", path.resolve())
     return str(path.resolve())
 
-def send_email_report(html: str, report: RecommendationReport):
+
+def send_email_report(html: str, report: RecommendationReport) -> None:
+    """Send the rendered HTML report via email using the configured SES sender.
+
+    Builds the subject line from the report metadata and delegates to
+    src.email_sender.send_report. Logs the outcome without raising.
+
+    Args:
+        html: Rendered HTML string to send as the email body.
+        report: The report object, used for subject line construction.
+    """
     cfg = get_config()
-    subject = (f"{'🌅' if report.run_type=='morning' else '🌆'} Portfolio Report "
-               f"{report.report_time.strftime('%d %b %Y')} — "
-               f"{len(report.buys())} Buys, {len(report.sells())} Sells")
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = cfg.ses_sender_email
-    msg["To"] = cfg.report_recipient_email
-    msg.attach(MIMEText(html, "html", "utf-8"))
+    subject = (
+        f"{'🌅' if report.run_type == 'morning' else '🌆'} Portfolio Report "
+        f"{report.report_time.strftime('%d %b %Y')} — "
+        f"{len(report.buys())} Buys, {len(report.sells())} Sells"
+    )
     try:
-        with smtplib.SMTP(cfg.email_host, cfg.email_port) as s:
-            s.sendmail(cfg.ses_sender_email, [cfg.report_recipient_email], msg.as_string())
-        print(f"  📧 Email sent! View at: http://localhost:8025")
-    except Exception as e:
-        print(f"  ⚠️  Email skipped (MailHog not running): {e}")
+        success = send_report(subject=subject, html_body=html)
+        if success:
+            logger.info("Email sent to %s", cfg.report_recipient_email)
+        else:
+            logger.warning("Email failed — check SES configuration")
+    except (OSError, RuntimeError) as e:
+        logger.warning("Email error: %s", e)
