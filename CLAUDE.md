@@ -206,6 +206,22 @@ Rule going forward: Any UI state set by the user (selected tab, selected batch, 
 What happened: `renderRecs()` tried to read `selectedBatch` from the DOM (`select.value`) on every call. When the polling loop reset the DOM, the variable appeared to persist but the rendered output changed unexpectedly.
 Rule going forward: User-driven UI state belongs in a JS module-level variable, not in the DOM. The DOM reflects state — it does not store it. Read from the variable, write to the DOM.
 
+#### 2026-03-25 — DB path must be anchored to `__file__`, not CWD-relative
+What happened: `approve.py` silently wrote to a stale `portfolio.db` at project root instead of `data/portfolio.db`.
+Root cause: `Path("data/portfolio.db")` resolves relative to whatever directory the script is launched from.
+Fix: Anchor all DB paths to `__file__`: `Path(__file__).resolve().parent.parent.parent / "data" / "portfolio.db"`
+Rule going forward: Never use relative paths for DB files. Always anchor to `__file__`.
+
+#### 2026-03-25 — SQLite returns datetime columns as plain strings
+What happened: `.replace(tzinfo=None)` called on a string — crash in `show_open()`.
+Root cause: `sqlite3` returns TEXT columns as Python strings, not `datetime` objects.
+Fix: Always parse explicitly: `datetime.strptime(value, "%Y-%m-%d %H:%M:%S")`
+Rule going forward: Never assume SQLite returns typed values. Strings need `strptime`, numbers need explicit cast.
+
+#### 2026-03-25 — CLI tools must print their DB path on startup
+What happened: `approve.py` completed silently but wrote nothing — no way to tell it had targeted the wrong DB.
+Rule going forward: Any script that reads or writes the DB prints `[DB] <path>` on startup. Silent success is indistinguishable from silent failure.
+
 ### Infra / AWS
 
 *(empty — add as we go)*
