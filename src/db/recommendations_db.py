@@ -472,6 +472,46 @@ def save_snapshot(
 
 # ── Read operations ───────────────────────────────────────────────────────────
 
+def get_decision_history(n_weeks: int = 4) -> list[dict]:
+    """Fetch decided recommendations from the last n_weeks for Claude context injection.
+
+    Returns approved recommendations and explicitly rejected ones (closed with a
+    rejection note). Excludes HOLDs closed without a trade — they carry no signal
+    about whether Claude's analytical direction was right or wrong.
+
+    Args:
+        n_weeks: How many weeks back to look. Defaults to 4 (last month of decisions).
+
+    Returns:
+        List of dicts with keys: symbol, action, approved, approval_note, created_at.
+        Ordered newest-first.
+    """
+    days = n_weeks * 7
+    # SQLite doesn't accept parameters inside datetime() modifiers — inject as a
+    # trusted integer (n_weeks is always an int, no SQL injection risk).
+    since_clause = f"datetime('now', '-{days} days')"
+    sql = f"""
+    SELECT symbol, action, approved, approval_note, created_at
+    FROM recommendations
+    WHERE (
+        approved = 1
+        OR (approved = 0 AND closed = 1 AND approval_note NOT LIKE '%HOLD%')
+    )
+      AND created_at >= {since_clause}
+    ORDER BY created_at DESC
+    """
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(sql)
+        rows = [dict(r) for r in cur.fetchall()]
+        conn.close()
+        return rows
+    except Exception as exc:
+        logger.warning("get_decision_history failed: %s", exc)
+        return []
+
+
 def get_open_approved_recs() -> list[dict]:
     """Return all approved, non-closed BUY/SELL recommendations.
 

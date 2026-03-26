@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 ACTION_COLORS: dict[Action, str] = {
     Action.BUY: "#16a34a",
     Action.SELL: "#dc2626",
+    Action.TRIM: "#7c3aed",
     Action.HOLD: "#d97706",
     Action.WATCH: "#2563eb",
 }

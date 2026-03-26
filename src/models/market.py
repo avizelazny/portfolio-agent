@@ -16,6 +16,7 @@ class Holding(BaseModel):
     unrealized_pnl_ils: Decimal
     unrealized_pnl_pct: Decimal
     weight_pct: Decimal
+    instrument_type: str = "stock"  # stock | etf | mutual_fund | money_market
 
 
 class PortfolioSnapshot(BaseModel):
