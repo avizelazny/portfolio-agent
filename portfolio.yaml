@@ -1,0 +1,205 @@
+cash_ils: 0.0
+holdings:
+- avg_cost_ils: 9591.21
+  company_name: תכלית סל אינדקס תעשיות ביטחוניות
+  current_price: 0.0
+  instrument_type: etf
+  pricing: continuous
+  quantity: 186
+  ticker: '1235985'
+- avg_cost_ils: 4100.0
+  company_name: הראל מחקה ת"א 35
+  current_price: 0.0
+  instrument_type: etf
+  pricing: continuous
+  quantity: 242
+  ticker: '1148907'
+- avg_cost_ils: 112.12
+  company_name: קסם KTF ביטחוניות
+  current_price: 0.0
+  instrument_type: mutual_fund
+  pricing: nav
+  quantity: 35260
+  ticker: '5142088'
+- avg_cost_ils: 129.83
+  company_name: תכלית TTF ביטחוניות
+  current_price: 0.0
+  instrument_type: mutual_fund
+  pricing: nav
+  quantity: 15494
+  ticker: '5141882'
+- avg_cost_ils: 264.02
+  company_name: תכלית TTF ת"א 35
+  current_price: 0.0
+  instrument_type: mutual_fund
+  pricing: nav
+  quantity: 11450
+  ticker: '5109418'
+- avg_cost_ils: 167.04
+  company_name: תכלית TTF Semiconductor
+  current_price: 0.0
+  instrument_type: mutual_fund
+  pricing: nav
+  quantity: 16416
+  ticker: '5134556'
+- avg_cost_ils: 0.0
+  company_name: מיטב כספית שקלית כשרה
+  current_price: 0.0
+  instrument_type: money_market
+  pricing: nav
+  quantity: 58462
+  ticker: '5136544'
+mandate:
+  # ── Return targets ────────────────────────────────────────────────────────
+  target_nominal_pct: 10.0        # CPI + 7% ≈ 10% nominal — current target
+  cpi_assumption_pct: 3.0         # update annually based on actual CPI
+  hurdle_rate_pct: 10.0           # scorer and SYSTEM_PROMPT use this — change only this to switch modes
+  conservative_nominal_pct: 8.0   # CPI + 5% — switch by setting hurdle_rate_pct: 8.0
+  benchmark: hurdle_rate          # options: hurdle_rate | ta35
+  # ── Portfolio rules ───────────────────────────────────────────────────────
+  cash_opportunity_cost_pct: 4.0
+  favour_conviction: true
+  max_positions: 8
+  max_single_position_pct: 15.0
+  min_conviction: MEDIUM
+  notes: CPI + 7% annually (~10% nominal). Concentrated high-conviction portfolio.
+  target_return_pct: 10.0
+pending_orders: []
+universes:
+  ta125:
+  - ESLT
+  - POLI
+  - LUMI
+  - TEVA
+  - DSCT
+  - TSEM
+  - NVMI
+  - PHOE
+  - MZTF
+  - ENLT
+  - NICE
+  - NXSN
+  - HARL
+  - BEZQ
+  - ORA
+  - AZRG
+  - CLIS
+  - OPCE
+  - FIBI
+  - CAMT
+  - NVPT
+  - ICL
+  - TASE
+  - BIG
+  - NWMD
+  - MMHD
+  - MGDL
+  - DLEKG
+  - MLSR
+  - SAE
+  - MGOR
+  - PZOL
+  - MVNE
+  - STRS
+  - SKBN
+  - BSEN
+  - PRTC
+  - ALHE
+  - ENRG
+  - ENOG
+  - AMOT
+  - DORL
+  - MTAV
+  - MTRX
+  - RIT1
+  - FIBIH
+  - FTAL
+  - ELAL
+  - SPEN
+  - KEN
+  - GILT
+  - TRPZ
+  - ISRM
+  - ILCO
+  - DMRI
+  - CEL
+  - NOFR
+  - AURA
+  - ARYT
+  - RATI
+  - ELTR
+  - FORTY
+  - ISCD
+  - MSKE
+  - HLAN
+  - ISCN
+  - RMLI
+  - MAXO
+  - ASHG
+  - ONE
+  - ARPT
+  - ISRO
+  - NAYAX
+  - ORL
+  - EQTL
+  - BLSR
+  - SLRE
+  - GAVY
+  - INRM
+  - PRTC2
+  - FOX
+  - MVTS
+  - DANE
+  - DNYA
+  - ARGO
+  - SMMT
+  - IDIN
+  - NTML
+  - ELRE
+  - AFRE
+  - MORE
+  - AZRM
+  - DELT
+  - LPDT
+  - IBI
+  - PRSK
+  - CRMO
+  - YHNF
+  - GCT
+  - TMRP
+  - ELCO
+  - ACRO
+  - ISRS
+  - VRDS
+  - DLEA
+  - RIMN
+  - AMRM
+  - ELCP
+  - DUNI
+  - RTLR
+  - ISRSH
+  - OPK
+  - PTBL
+  - ACKR
+  - CRRE
+  - SKBE
+  - ISSH
+  - VLLR
+  - PLRM
+  - DLTB
+  - MLMT
+  - AMPA
+  - UNVR
+  ta_etfs:
+  - '1235985'
+  - '1148907'
+  teudot_sal:
+  - '5130661'
+  - '5142088'
+  - '5109418'
+  - '5134556'
+  - '5141882'
+  - '5136544'
+watchlist:
+- company_name: Smart Shooter
+  ticker: SMSH
