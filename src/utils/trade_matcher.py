@@ -50,6 +50,10 @@ def match_and_log_trades(
     - Most recent approved rec wins if multiple candidates match
     - Each recommendation is matched at most once per call
 
+    On each match, writes price_actual, qty_actual, and executed_at.  Also
+    sets approval_note to a standard auto-match string if the note is currently
+    NULL or empty — existing notes are never overwritten.
+
     Args:
         transactions: List of transaction dicts as returned by
             parse_transaction_history().  Keys used: security_id,
@@ -138,13 +142,24 @@ def match_and_log_trades(
             skipped += 1
             continue
 
+        auto_note = (
+            f"Auto-matched \u2014 {best['action']} {int(tx_qty)} units"
+            f" @ \u20aa{tx_price:,.2f} on {tx_date} (trade matcher)"
+        )
         cur.execute(
             """
             UPDATE recommendations
-            SET price_actual = ?, qty_actual = ?, executed_at = ?
+            SET price_actual   = ?,
+                qty_actual     = ?,
+                executed_at    = ?,
+                approval_note  = CASE
+                    WHEN approval_note IS NULL OR approval_note = ''
+                    THEN ?
+                    ELSE approval_note
+                END
             WHERE id = ?
             """,
-            (tx_price, tx_qty, tx_date.isoformat(), best["id"]),
+            (tx_price, tx_qty, tx_date.isoformat(), auto_note, best["id"]),
         )
 
         used_ids.add(best["id"])
