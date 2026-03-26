@@ -222,6 +222,13 @@ Rule going forward: Never assume SQLite returns typed values. Strings need `strp
 What happened: `approve.py` completed silently but wrote nothing — no way to tell it had targeted the wrong DB.
 Rule going forward: Any script that reads or writes the DB prints `[DB] <path>` on startup. Silent success is indistinguishable from silent failure.
 
+#### 2026-03-25 — Investment mandate is config, not hardcode
+What happened: Decided not to hardcode the 10% nominal target in `agent_core.py` or the scorer.
+Decision: All mandate values live in `portfolio.yaml` under the `mandate:` block.
+The scorer, SYSTEM_PROMPT, and hit-rate panel all read `hurdle_rate_pct` from `portfolio.yaml`.
+To switch to conservative mode (CPI+5% = 8% nominal): set `hurdle_rate_pct: 8.0` — nothing else changes.
+Rule going forward: Any tunable investment parameter (target return, CPI assumption, benchmark type) belongs in `portfolio.yaml`, never hardcoded.
+
 ### Infra / AWS
 
 *(empty — add as we go)*
@@ -236,7 +243,7 @@ Rule going forward: Any script that reads or writes the DB prints `[DB] <path>` 
 | Phase A+B | ✅ Complete | Feedback system — recommendation scoring, rejection history, hit-rate tracking |
 | Phase 2 | 🔜 Planned | AWS ECS + EventBridge + SES deployment, PostgreSQL + pgvector, Docker |
 
-**Current focus:** Measurement track (benchmark scoring, hit-rate panel) + agent quality (SYSTEM_PROMPT mandate update).
+**Current focus:** Recommendation scorer (#1, #2) using `hurdle_rate_pct` from `portfolio.yaml`. SYSTEM_PROMPT mandate update (#17).
 
 ---
 
