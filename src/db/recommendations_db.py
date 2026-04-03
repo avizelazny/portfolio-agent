@@ -174,6 +174,8 @@ def _migrate_scorer_columns() -> None:
     new_columns = [
         ("benchmark_return_7d",  "REAL"),
         ("benchmark_return_30d", "REAL"),
+        ("unacted_return_7d",    "REAL"),
+        ("unacted_return_30d",   "REAL"),
     ]
     try:
         conn = get_connection()

@@ -232,6 +232,13 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
 .quality-table td{padding:4px 6px;border-top:1px solid rgba(255,255,255,.04)}
 .quality-table .num{text-align:right;font-family:'DM Mono',monospace}
 
+/* ── Hit Rate panel ── */
+.hitrate-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;padding:14px 16px}
+.hitrate-card{background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center}
+.hitrate-card .hr-val{font-family:'Syne',sans-serif;font-weight:700;font-size:1.5rem}
+.hitrate-card .hr-lbl{font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-top:3px}
+.hitrate-card .hr-sub{font-size:.65rem;color:var(--muted);margin-top:4px;font-family:'DM Mono',monospace}
+
 /* ── Shared rec-card note field ── */
 .rec-note{width:100%;margin-top:8px;font-size:.78rem;background:rgba(255,255,255,.04);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;resize:vertical;font-family:'DM Mono',monospace;box-sizing:border-box}
 .rec-note:focus{outline:none;border-color:rgba(99,102,241,.5)}
@@ -459,6 +466,20 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
         <div id="qualityBody">
           <div class="empty" style="padding:20px">
             <div class="icon">🎯</div>No scored recommendations yet — run the pipeline to populate
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">🎯 Hurdle Hit Rate</div>
+          <div class="panel-badge" id="hitrateBadge">vs hurdle</div>
+        </div>
+        <div id="hitrateBody">
+          <div class="hitrate-grid">
+            <div class="hitrate-card"><div class="hr-val" style="color:var(--muted)">—</div><div class="hr-lbl">Last 10</div><div class="hr-sub">no data</div></div>
+            <div class="hitrate-card"><div class="hr-val" style="color:var(--muted)">—</div><div class="hr-lbl">Last 20</div><div class="hr-sub">no data</div></div>
+            <div class="hitrate-card"><div class="hr-val" style="color:var(--muted)">—</div><div class="hr-lbl">All Time</div><div class="hr-sub">no data</div></div>
           </div>
         </div>
       </div>
@@ -1281,6 +1302,127 @@ def api_quality() -> Response:
         })
     except Exception as exc:
         logger.warning("api_quality failed: %s", exc)
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@app.route("/api/hitrate")
+def api_hitrate() -> Response:
+    """Return hurdle-rate hit rates across three rolling windows.
+
+    Combines acted recs (approved=1, benchmark_return scored) and unacted recs
+    (approved=0 closed=1, unacted_return scored). "Beat" = the most recent
+    available score (30d preferred over 7d) is positive (i.e. outperformed hurdle).
+
+    Windows: last 10, last 20, all time — ordered newest-first by created_at.
+
+    Returns:
+        JSON with keys: windows (list of window dicts), hurdle_rate_pct (float).
+        Each window dict has: label, acted_scored, acted_beat, acted_hit_rate,
+        unacted_scored, unacted_beat, unacted_hit_rate, total_scored, total_beat,
+        total_hit_rate.
+    """
+    try:
+        import yaml as _yaml
+        from src.db.recommendations_db import get_connection
+
+        # Read hurdle rate from portfolio.yaml (same source as scorer)
+        _yaml_path = Path(__file__).resolve().parent / "portfolio.yaml"
+        try:
+            with open(_yaml_path, encoding="utf-8") as fh:
+                _cfg = _yaml.safe_load(fh)
+            hurdle = float(_cfg.get("mandate", {}).get("hurdle_rate_pct", 10.0))
+        except Exception:
+            hurdle = 10.0
+
+        conn = get_connection()
+        cur = conn.cursor()
+
+        # Fetch all scoreable recs ordered newest-first.
+        # "beat" = prefer 30d score, fall back to 7d; positive = beat hurdle.
+        cur.execute("""
+            SELECT id, approved, created_at,
+                   benchmark_return_7d, benchmark_return_30d,
+                   unacted_return_7d,   unacted_return_30d
+            FROM recommendations
+            WHERE (
+                (approved = 1 AND (benchmark_return_7d IS NOT NULL OR benchmark_return_30d IS NOT NULL))
+                OR
+                (approved = 0 AND closed = 1 AND (unacted_return_7d IS NOT NULL OR unacted_return_30d IS NOT NULL))
+            )
+            ORDER BY created_at DESC
+        """)
+        rows = [dict(r) for r in cur.fetchall()]
+        conn.close()
+
+        def _beat_acted(r: dict) -> bool | None:
+            """Return True if this acted rec beat the hurdle, else False, else None."""
+            score = r["benchmark_return_30d"] if r["benchmark_return_30d"] is not None else r["benchmark_return_7d"]
+            if score is None:
+                return None
+            return score > 0
+
+        def _beat_unacted(r: dict) -> bool | None:
+            """Return True if this unacted rec beat the hurdle, else False, else None."""
+            score = r["unacted_return_30d"] if r["unacted_return_30d"] is not None else r["unacted_return_7d"]
+            if score is None:
+                return None
+            return score > 0
+
+        def _build_window(subset: list[dict], label: str) -> dict:
+            """Compute hit-rate stats for a slice of rows.
+
+            Args:
+                subset: Rows ordered newest-first, already sliced to window size.
+                label: Human-readable window label (e.g. 'Last 10').
+
+            Returns:
+                Dict with acted/unacted/total scored counts, beat counts, and hit rates.
+            """
+            acted_scored = acted_beat = 0
+            unacted_scored = unacted_beat = 0
+            for r in subset:
+                if r["approved"] == 1:
+                    b = _beat_acted(r)
+                    if b is not None:
+                        acted_scored += 1
+                        if b:
+                            acted_beat += 1
+                else:
+                    b = _beat_unacted(r)
+                    if b is not None:
+                        unacted_scored += 1
+                        if b:
+                            unacted_beat += 1
+
+            total_scored = acted_scored + unacted_scored
+            total_beat   = acted_beat   + unacted_beat
+
+            def _pct(beat: int, total: int) -> float | None:
+                return round(beat / total * 100, 1) if total > 0 else None
+
+            return {
+                "label":            label,
+                "acted_scored":     acted_scored,
+                "acted_beat":       acted_beat,
+                "acted_hit_rate":   _pct(acted_beat,   acted_scored),
+                "unacted_scored":   unacted_scored,
+                "unacted_beat":     unacted_beat,
+                "unacted_hit_rate": _pct(unacted_beat, unacted_scored),
+                "total_scored":     total_scored,
+                "total_beat":       total_beat,
+                "total_hit_rate":   _pct(total_beat,   total_scored),
+            }
+
+        windows = [
+            _build_window(rows[:10],  "Last 10"),
+            _build_window(rows[:20],  "Last 20"),
+            _build_window(rows,       "All Time"),
+        ]
+
+        return jsonify({"ok": True, "windows": windows, "hurdle_rate_pct": hurdle})
+
+    except Exception as exc:
+        logger.warning("api_hitrate failed: %s", exc)
         return jsonify({"ok": False, "error": str(exc)}), 500
 
 
