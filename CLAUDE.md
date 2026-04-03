@@ -281,7 +281,7 @@ Rule going forward: Any tunable investment parameter (target return, CPI assumpt
 | Phase Bug Review | ✅ Complete (2026-03-29) | Full codebase sweep — 14 files fixed, 18 bugs resolved |
 | Phase 2 | 🔜 Planned | AWS ECS + EventBridge + SES deployment, PostgreSQL + pgvector, Docker |
 
-**Current focus:** Recommendation scorer (#1, #2) using `hurdle_rate_pct` from `portfolio.yaml`. SYSTEM_PROMPT mandate update (#17).
+**Current focus:** Hit-rate dashboard panel (#4). Unacted tracking (#3). REDUCE action (#13).
 
 ---
 
@@ -305,7 +305,7 @@ Rule going forward: Any tunable investment parameter (target return, CPI assumpt
 | 14 | Infra/UX | AWS ECS + EventBridge + SES deployment |
 | 15 | Infra/UX | Live stock prices in Claude context for entry guidance |
 | 16 | Agent | Apply updated SYSTEM_PROMPT — 11% nominal target, favour conviction, no unnecessary HOLDs (file: `updated_system_prompt.py`) |
-| 17 | Agent | Apply updated SYSTEM_PROMPT to agent_core.py — encode 11% nominal target (hurdle_rate_pct from portfolio.yaml), favour conviction over diversification, no unnecessary HOLDs, underperformance is also a risk. File ready at updated_system_prompt.py. |
+| 17 | Agent | ✅ DONE (prior session) — build_system_prompt() reads hurdle_rate_pct from portfolio.yaml at runtime. Conviction-first, no unnecessary HOLDs, underperformance framed as risk. updated_system_prompt.py was never needed — mandate-driven prompt was built directly into agent_core.py. |
 | 18 | Infra/UX | `price_limit` field on recommendation record — store the limit order entry price the user sets, so expired limits leave a trace in the DB. Currently this lives only in portfolio.yaml pending_orders and disappears when the order is cancelled. |
 
 ---
