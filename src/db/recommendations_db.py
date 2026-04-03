@@ -7,7 +7,7 @@ For AWS deployment, swap this module for the psycopg2/PostgreSQL version
 
 import logging
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -133,6 +133,7 @@ def init_recommendations_table() -> None:
 
     _migrate_quality_columns()
     _migrate_execution_columns()
+    _migrate_scorer_columns()
 
 
 def _migrate_execution_columns() -> None:
@@ -162,6 +163,33 @@ def _migrate_execution_columns() -> None:
         conn.close()
     except Exception as exc:
         logger.warning("_migrate_execution_columns failed: %s", exc)
+
+
+def _migrate_scorer_columns() -> None:
+    """Add hurdle-rate scorer columns to an existing recommendations table.
+
+    Safe to run on every startup — skips columns that already exist.
+    These columns are populated by recommendation_scorer.score_recommendations().
+    """
+    new_columns = [
+        ("benchmark_return_7d",  "REAL"),
+        ("benchmark_return_30d", "REAL"),
+    ]
+    try:
+        conn = get_connection()
+        with conn:
+            cur = conn.cursor()
+            cur.execute("PRAGMA table_info(recommendations)")
+            existing = {row["name"] for row in cur.fetchall()}
+            for col_name, col_type in new_columns:
+                if col_name not in existing:
+                    cur.execute(
+                        f"ALTER TABLE recommendations ADD COLUMN {col_name} {col_type}"
+                    )
+                    logger.info("Migration: added column %s to recommendations", col_name)
+        conn.close()
+    except Exception as exc:
+        logger.warning("_migrate_scorer_columns failed: %s", exc)
 
 
 def _migrate_quality_columns() -> None:
@@ -425,6 +453,9 @@ def save_snapshot(
         price_at_rec: Security price at recommendation time.
         action: Recommendation action string (BUY/SELL/HOLD/WATCH/TRIM).
     """
+    if not price_at_rec:
+        logger.warning("save_snapshot: price_at_rec is zero for rec_id=%s, skipping", rec_id)
+        return
     return_pct = (price_now - price_at_rec) / price_at_rec * 100
 
     ta35_return_pct: float | None = None
@@ -699,7 +730,7 @@ def get_recs_needing_snapshots() -> list[dict]:
         cur.execute(sql)
         recs = [dict(r) for r in cur.fetchall()]
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         result = []
         for rec in recs:
             cur.execute(snap_sql, (rec["id"],))
