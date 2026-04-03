@@ -149,6 +149,33 @@ At the end of every dev session, always ask:
 
 ---
 
+## 🧭 Design Philosophy
+
+These principles guide every architectural and feature decision in this project.
+
+### Simple over clever
+When there are two ways to build something, always pick the simpler one. Complexity compounds — a simple foundation is easier to debug, extend, and understand six months later. If a feature requires a clever trick to work, the design is probably wrong.
+
+### Good foundations over complete features
+Build the scaffolding correctly before adding floors. A well-designed empty hit-rate panel that shows "—" gracefully is better than a brittle panel showing wrong numbers. Get the data model right first; the UI can always be improved.
+
+### Uniform logic — no special cases
+Funds and stocks should go through the same pipeline. If the pipeline can't handle a fund, skip it gracefully — don't add a special branch. Special cases become technical debt. The scorer's "skip purely numeric IDs" rule is the right pattern: one rule, applied everywhere.
+
+### Config over hardcode
+Any tunable parameter belongs in `portfolio.yaml`, not in code. Target return, CPI assumption, hurdle rate, benchmark type — all config. Changing investment strategy should never require a code change.
+
+### Mandate-driven, not benchmark-driven
+The goal is CPI + 7% (10% nominal) — not beating TA-35. Comparing recs to TA-35 is the wrong question. The right question is: did this rec contribute to the 10% annual target? The `hurdle_rate_pct` in `portfolio.yaml` is the single source of truth for this.
+
+### Verify before building
+Before starting any backlog item, show me the current state of the relevant files. Features get built and forgotten. Always check reality before writing code.
+
+### The Karpathy loop
+Every rec Claude generates is a training signal. Approve/reject with a reason. Those reasons feed back into Claude's next batch via `decision_history` XML. Over time, Claude learns your preferences, your portfolio constraints, and your investment style. This is the core feedback loop — protect it.
+
+---
+
 ## 📚 Lessons Learned
 
 > This section grows over time. Every time I correct Claude, the fix goes here so it never repeats.
@@ -266,6 +293,40 @@ The scorer, SYSTEM_PROMPT, and hit-rate panel all read `hurdle_rate_pct` from `p
 To switch to conservative mode (CPI+5% = 8% nominal): set `hurdle_rate_pct: 8.0` — nothing else changes.
 Rule going forward: Any tunable investment parameter (target return, CPI assumption, benchmark type) belongs in `portfolio.yaml`, never hardcoded.
 
+#### 2026-04-03 — Always check if a backlog item is already implemented before building
+What happened: Items #15 (live prices) and #16 (SYSTEM_PROMPT mandate) were in the backlog as "to do" but had already been fully implemented in prior sessions. Discovered by asking CC to show the current state before writing any code.
+Root cause: Backlog was tracking intent, not reality. Features got built in CC sessions without being marked done in CLAUDE.md.
+Fix: Before starting any backlog item, always ask CC to show the current state of the relevant files first.
+Rule going forward: Start every backlog item with "show me the current state of X" before writing a single line of code. If it's already done, mark it and move on.
+
+#### 2026-04-03 — Recommendation lifecycle has 6 distinct states derived from 3 columns
+What happened: Confusion about what "status" a rec is in — there is no status column, it's derived.
+Rule going forward: Status = f(approved, closed, price_actual):
+  - `pending`   → approved=1, closed=0, price_actual=null
+  - `executed`  → approved=1, closed=0, price_actual=value
+  - `completed` → approved=1, closed=1, price_actual=value
+  - `closed`    → approved=1, closed=1, price_actual=null (HOLDs, stale)
+  - `rejected`  → approved=0, closed=0
+  - `expired`   → approved=1, closed=1, price_actual=null, approval_note contains "limit expired"
+Future improvement: add explicit `status TEXT` column with CHECK constraint.
+
+#### 2026-04-03 — Expired limit orders must be closed immediately
+What happened: Rec #2 ESLT sat as "pending" indefinitely after the ₪2,650 limit order was cancelled.
+Root cause: No workflow step for "limit order placed but never hit."
+Fix: Added `price_limit` column to store the targeted entry price. When a limit expires, close the rec immediately.
+Rule going forward: When a limit order is cancelled without executing, immediately run:
+  `py -3.12 -X utf8 approve.py close [id] "Limit ₪X cancelled — price never reached."`
+The `price_limit` field now preserves what entry was targeted, even after the order is gone.
+
+#### 2026-04-03 — Scorer skips purely numeric security IDs — this is expected, not a bug
+What happened: All 3 executed recs (5136544, 5130661, 1235985) are fund IDs — scorer skipped all.
+Rule going forward: Purely numeric security ID = Israeli mutual fund or ETF = no yfinance coverage = skip gracefully. The scorer and hit-rate panel only produce data for TASE stock tickers (e.g. ESLT, TEVA, LUMI). Expected behaviour.
+
+#### 2026-04-03 — portfolio.yaml pending_orders goes stale mid-week
+What happened: `pending_orders` contained ghost orders (already executed or cancelled) and was missing 2 live orders.
+Root cause: The הוראות file parser only runs on Sunday upload. Orders placed or cancelled mid-week don't update automatically.
+Rule going forward: Before every Sunday batch run, verify `pending_orders` in `portfolio.yaml` matches Bank Discount open orders. Fix manually if stale. `pending_orders: []` is valid when no orders are live.
+
 ### Infra / AWS
 
 *(empty — add as we go)*
@@ -320,6 +381,10 @@ Rule going forward: Any tunable investment parameter (target return, CPI assumpt
 3. Open `localhost:5000`, upload all 3 files, click UPLOAD & RUN
 4. Wait ~80 seconds, review 10–12 recommendations
 5. For each: run AI Analysis, approve/reject with reason
+   - When approving a BUY with a limit order: `approve.py yes [id] [limit_price] "note"`
+   - When a limit order expires without executing: `approve.py close [id] "Limit ₪X cancelled — price never reached."`
+   - When a HOLD has no trade to log: `approve.py close [id]`
+   - Never leave a pending rec open indefinitely — every rec needs a terminal state.
 
 **Monday:** Execute approved trades, log prices with `approve.py yes [id] [price] [qty]`
 
