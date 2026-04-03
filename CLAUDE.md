@@ -305,6 +305,7 @@ Rule going forward: Any tunable investment parameter (target return, CPI assumpt
 | 14 | Infra/UX | AWS ECS + EventBridge + SES deployment |
 | 15 | Infra/UX | Live stock prices in Claude context for entry guidance |
 | 16 | Agent | Apply updated SYSTEM_PROMPT — 11% nominal target, favour conviction, no unnecessary HOLDs (file: `updated_system_prompt.py`) |
+| 17 | Agent | Apply updated SYSTEM_PROMPT to agent_core.py — encode 11% nominal target (hurdle_rate_pct from portfolio.yaml), favour conviction over diversification, no unnecessary HOLDs, underperformance is also a risk. File ready at updated_system_prompt.py. |
 | 18 | Infra/UX | `price_limit` field on recommendation record — store the limit order entry price the user sets, so expired limits leave a trace in the DB. Currently this lives only in portfolio.yaml pending_orders and disappears when the order is cancelled. |
 
 ---
