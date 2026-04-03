@@ -8,6 +8,7 @@ Then open: http://localhost:5000
 import logging
 import sys
 import threading
+import time
 import traceback
 from datetime import datetime
 from decimal import Decimal
@@ -1635,6 +1636,28 @@ def api_ai_analyze() -> Response:
         return jsonify({"ok": False, "error": str(exc)})
 
 
+def _run_scorer_daily() -> None:
+    """Background daemon thread — runs recommendation scorer once every 24 hours.
+
+    Sleeps first, then scores, so the startup call already covers day-zero.
+    Logs results via add_log() so they appear in the dashboard run log.
+    Exceptions are caught and logged — scorer failure never crashes the dashboard.
+    """
+    while True:
+        time.sleep(24 * 60 * 60)
+        try:
+            from src.recommendation_scorer import score_recommendations
+            result = score_recommendations()
+            add_log(
+                f"Nightly scorer: acted {result['acted_7d']}+{result['acted_30d']} | "
+                f"unacted {result['unacted_7d']}+{result['unacted_30d']} | "
+                f"skipped {result['skipped']}",
+                "info",
+            )
+        except Exception as exc:
+            add_log(f"Nightly scorer error: {exc}", "err")
+
+
 def preload_last_state() -> None:
     """Pre-populate state with the last saved recommendation batch from the DB.
 
@@ -1703,10 +1726,13 @@ if __name__ == "__main__":
     preload_last_state()
     scorer_result = score_recommendations()
     print(
-        f"  [Scorer] 7d: {scorer_result['scored_7d']} scored | "
-        f"30d: {scorer_result['scored_30d']} scored | "
+        f"  [Scorer] acted 7d: {scorer_result['acted_7d']} | 30d: {scorer_result['acted_30d']} | "
+        f"unacted 7d: {scorer_result['unacted_7d']} | 30d: {scorer_result['unacted_30d']} | "
         f"skipped: {scorer_result['skipped']} | errors: {scorer_result['errors']}"
     )
+    _scorer_thread = threading.Thread(target=_run_scorer_daily, daemon=True, name="scorer-daily")
+    _scorer_thread.start()
+    print("  [Scorer] Background daily thread started")
     print()
     print("  Opening at: http://localhost:5000")
     print()
