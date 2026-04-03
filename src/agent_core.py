@@ -3,6 +3,7 @@ import logging
 import re
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 import anthropic
@@ -19,6 +20,8 @@ from src.utils.config import get_config
 from src.utils.portfolio_loader import InvestmentMandate, load_mandate, load_pending_orders
 
 logger = logging.getLogger(__name__)
+
+_PORTFOLIO_YAML = Path(__file__).resolve().parent.parent / "portfolio.yaml"
 
 CLAUDE_MODEL = "claude-opus-4-6"
 
@@ -157,7 +160,7 @@ def _build_context(
     live_prices_block = f"\n<live_prices>\n{live_prices_context}\n</live_prices>\n" if live_prices_context else ""
 
     # ── Pending orders block ──────────────────────────────────────────────────
-    orders = load_pending_orders()
+    orders = load_pending_orders(str(_PORTFOLIO_YAML))
     if orders:
         orders_lines = "\n".join(
             f"  - {o['action']} {o['name']} ({o['security_id']}): "
@@ -223,6 +226,11 @@ def _build_context(
     else:
         decision_history_block = ""
 
+    _ta35_pct = index_perf.get("ta35", {}).get("change_pct")
+    _ta125_pct = index_perf.get("ta125", {}).get("change_pct")
+    _ta35_str = f"{_ta35_pct:+.2f}" if _ta35_pct is not None else "N/A"
+    _ta125_str = f"{_ta125_pct:+.2f}" if _ta125_pct is not None else "N/A"
+
     return f"""<run_context>Run: {run_type.upper()} | {datetime.now().strftime('%Y-%m-%d %H:%M IST')}</run_context>
 
 <portfolio>
@@ -237,7 +245,7 @@ def _build_context(
 
 <macro>
   BOI Rate: {macro.boi_interest_rate or 'N/A'}% | CPI: {macro.cpi_annual_pct or 'N/A'}% | USD/ILS: {macro.usd_ils_rate or 'N/A'}
-  TA-35: {index_perf.get('ta35',{}).get('change_pct','N/A'):+}% | TA-125: {index_perf.get('ta125',{}).get('change_pct','N/A'):+}%
+  TA-35: {_ta35_str}% | TA-125: {_ta125_str}%
 </macro>{fx_block}{div_block}{pending_orders_block}
 
 <signals>
@@ -255,7 +263,8 @@ def _build_context(
 {decision_history_block}{tx_block}{live_prices_block}
 <task>
 Generate a {run_type} investment report. Respond ONLY with valid JSON — no preamble, no markdown, no code fences.
-CRITICAL — action field MUST be exactly one of: BUY, SELL, TRIM, HOLD, WATCH. No other values. No compound values. No slashes.
+CRITICAL — action field MUST be exactly one of: BUY, SELL, REDUCE, TRIM, HOLD, WATCH. No other values. No compound values. No slashes.
+  BUY=enter new or add to position, SELL=full exit, REDUCE=partial exit (sell some, keep rest), TRIM=minor size reduction, HOLD=keep as-is with specific reason, WATCH=monitor, no action yet.
 CRITICAL — conviction field MUST be exactly one of: HIGH, MEDIUM, LOW. No other values.
 CRITICAL JSON RULE: Hebrew fund names may contain the gershayim mark (e.g. ת"א). If you reference such names inside a JSON string value, replace the double-quote character with the Unicode gershayim ״ (U+05F4) so the JSON remains valid. Never leave an unescaped " inside a JSON string value.
 {{
@@ -376,7 +385,7 @@ class PortfolioAgent:
             len(live_prices_context),
             len(transaction_context),
         )
-        mandate = load_mandate()
+        mandate = load_mandate(str(_PORTFOLIO_YAML))
         message = self._client.messages.create(
             model=self._model,
             max_tokens=8192,

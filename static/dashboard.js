@@ -226,7 +226,7 @@ function updateUI(data) {
     const r = data.report;
     document.getElementById('statRecs').textContent = r.recommendations.length;
     const buys = r.recommendations.filter(x=>x.action==='BUY').length;
-    const sells = r.recommendations.filter(x=>x.action==='SELL').length;
+    const sells = r.recommendations.filter(x=>x.action==='SELL'||x.action==='REDUCE').length;
     document.getElementById('statRecSub').textContent = buys + ' buys, ' + sells + ' sells';
     document.getElementById('recsBadge').textContent = r.recommendations.length + ' total';
     document.getElementById('marketSummary').textContent = r.market_summary;

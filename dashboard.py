@@ -173,6 +173,7 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
 .pill-HOLD{background:rgba(245,158,11,.2);color:#fbbf24;border:1px solid rgba(245,158,11,.3)}
 .pill-WATCH{background:rgba(59,130,246,.2);color:#60a5fa;border:1px solid rgba(59,130,246,.3)}
 .pill-TRIM{background:rgba(124,58,237,.2);color:#a78bfa;border:1px solid rgba(124,58,237,.3)}
+.pill-REDUCE{background:rgba(249,115,22,.2);color:#fb923c;border:1px solid rgba(249,115,22,.3)}
 .rec-id-badge{font-family:'DM Mono',monospace;font-size:.68rem;color:var(--muted);opacity:.6;letter-spacing:.02em}
 .rec-ticker{font-family:'Syne',sans-serif;font-weight:800;font-size:.95rem;color:var(--text)}
 .rec-sub-ticker{font-family:'DM Mono',monospace;font-size:.65rem;color:var(--muted);opacity:.7}

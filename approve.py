@@ -29,6 +29,7 @@ Usage:
 
 import sys
 import os
+from pathlib import Path
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from dotenv import load_dotenv
@@ -57,7 +58,7 @@ def fmt_date(d) -> str:
     return str(d)
 
 CONVICTION_ICONS = {"HIGH": "[H]", "MEDIUM": "[M]", "LOW": "[L]"}
-ACTION_ICONS = {"BUY": "[BUY]", "SELL": "[SEL]", "HOLD": "[->]", "WATCH": "[W]"}
+ACTION_ICONS = {"BUY": "[BUY]", "SELL": "[SEL]", "REDUCE": "[RED]", "TRIM": "[TRM]", "HOLD": "[->]", "WATCH": "[W]"}
 
 
 # -- Display functions ---------------------------------------------------------
@@ -486,6 +487,10 @@ def main():
 
     elif cmd == "supersede-all":
         from src.db.recommendations_db import get_connection
+        confirm = input("  Reject all pending recs except the latest batch? (yes/no): ").strip().lower()
+        if confirm != "yes":
+            print("  Cancelled.")
+            return
         with get_connection() as conn:
             cur = conn.cursor()
             cur.execute("SELECT MAX(created_at) FROM recommendations WHERE approved IS NULL")
@@ -509,12 +514,21 @@ def main():
         import yaml
 
         def load_yaml():
-            with open("portfolio.yaml", encoding="utf-8") as f:
+            yaml_path = Path(__file__).resolve().parent / "portfolio.yaml"
+            with open(yaml_path, encoding="utf-8") as f:
                 return yaml.safe_load(f)
 
         def save_yaml(data):
-            with open("portfolio.yaml", "w", encoding="utf-8") as f:
-                yaml.dump(data, f, allow_unicode=True, default_flow_style=False)
+            import tempfile
+            yaml_path = Path(__file__).resolve().parent / "portfolio.yaml"
+            tmp_fd, tmp_path = tempfile.mkstemp(dir=yaml_path.parent, suffix=".tmp")
+            try:
+                with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                    yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+                os.replace(tmp_path, str(yaml_path))
+            except Exception:
+                os.unlink(tmp_path)
+                raise
 
         if subcommand == "list":
             data = load_yaml()
@@ -660,6 +674,32 @@ def main():
         print(f"\n  [OK] DB reset complete — {deleted} recommendations + {snapshots} snapshots deleted.")
         print(f"       IDs will start from 1 on next run.")
         print(f"       Ready for first production batch.\n")
+
+    elif cmd == "status":
+        from src.db.recommendations_db import get_connection
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, symbol, action, conviction, approved, closed, "
+            "price_actual, approval_note FROM recommendations ORDER BY id"
+        )
+        rows = cur.fetchall()
+        conn.close()
+
+        if not rows:
+            print("\n  No recommendations in DB.\n")
+        else:
+            print(f"\n  {'ID':>4}  {'Symbol':<12} {'Action':<6} {'Conv':<8} "
+                  f"{'Appr':>5} {'Clsd':>4}  {'Price':>12}  Note")
+            print(f"  {'-'*4}  {'-'*12} {'-'*6} {'-'*8} "
+                  f"{'-'*5} {'-'*4}  {'-'*12}  {'-'*40}")
+            for r in rows:
+                note = (r["approval_note"] or "")[:60].replace("\n", " ")
+                price = f"\u20aa{r['price_actual']:,.2f}" if r["price_actual"] else "—"
+                print(f"  {r['id']:>4}  {r['symbol']:<12} {r['action']:<6} "
+                      f"{r['conviction']:<8} {str(r['approved']):>5} "
+                      f"{str(r['closed']):>4}  {price:>12}  {note}")
+            print()
 
     else:
         print(__doc__)

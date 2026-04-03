@@ -9,6 +9,7 @@ class Action(str, Enum):
 
     BUY = "BUY"
     SELL = "SELL"
+    REDUCE = "REDUCE"
     TRIM = "TRIM"
     HOLD = "HOLD"
     WATCH = "WATCH"
