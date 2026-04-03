@@ -134,6 +134,7 @@ def init_recommendations_table() -> None:
     _migrate_quality_columns()
     _migrate_execution_columns()
     _migrate_scorer_columns()
+    _migrate_price_limit_column()
 
 
 def _migrate_execution_columns() -> None:
@@ -192,6 +193,51 @@ def _migrate_scorer_columns() -> None:
         conn.close()
     except Exception as exc:
         logger.warning("_migrate_scorer_columns failed: %s", exc)
+
+
+def _migrate_price_limit_column() -> None:
+    """Add price_limit column to an existing recommendations table.
+
+    Safe to run on every startup — skips if the column already exists.
+    price_limit stores the limit order entry price set at approval time,
+    preserving it even after the order expires and is removed from portfolio.yaml.
+    """
+    try:
+        conn = get_connection()
+        with conn:
+            cur = conn.cursor()
+            cur.execute("PRAGMA table_info(recommendations)")
+            existing = {row["name"] for row in cur.fetchall()}
+            if "price_limit" not in existing:
+                conn.execute("ALTER TABLE recommendations ADD COLUMN price_limit REAL")
+                logger.info("Migration: added column price_limit to recommendations")
+        conn.close()
+    except Exception as exc:
+        logger.warning("_migrate_price_limit_column failed: %s", exc)
+
+
+def set_price_limit(rec_id: int, price_limit: float) -> None:
+    """Store the limit order entry price on a recommendation record.
+
+    Called at approval time when the user specifies a limit price.
+    price_limit is preserved permanently on the rec even after the order
+    is removed from portfolio.yaml pending_orders.
+
+    Args:
+        rec_id: DB id of the recommendation to update.
+        price_limit: The limit order entry price in ILS.
+    """
+    try:
+        conn = get_connection()
+        with conn:
+            conn.execute(
+                "UPDATE recommendations SET price_limit = ? WHERE id = ?",
+                (price_limit, rec_id),
+            )
+        conn.close()
+        logger.info("set_price_limit: rec#%s limit=%.4f", rec_id, price_limit)
+    except Exception as exc:
+        logger.warning("set_price_limit failed for rec#%s: %s", rec_id, exc)
 
 
 def _migrate_quality_columns() -> None:
@@ -524,7 +570,7 @@ def get_decision_history(n_weeks: int = 4) -> list[dict]:
     # trusted integer (n_weeks is always an int, no SQL injection risk).
     since_clause = f"datetime('now', '-{days} days')"
     sql = f"""
-    SELECT symbol, action, approved, approval_note, created_at
+    SELECT symbol, action, approved, approval_note, created_at, price_limit
     FROM recommendations
     WHERE (
         approved = 1

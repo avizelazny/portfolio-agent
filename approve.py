@@ -12,9 +12,10 @@ Usage:
     python approve.py                    # Interactive mode — shows pending list
     python approve.py pending            # Show all pending recommendations
     python approve.py open               # Show open approved positions
-    python approve.py yes 42             # Approve rec #42 (will ask for price)
-    python approve.py yes 42 38.50       # Approve rec #42, bought at ₪38.50
-    python approve.py yes 42 38.50 100   # Approve + 100 units
+    python approve.py yes 42                    # Approve rec #42 (will ask for price)
+    python approve.py yes 42 38.50             # Approve rec #42, bought at ₪38.50
+    python approve.py yes 42 38.50 100         # Approve + 100 units
+    python approve.py yes 42 38.50 100 2650    # Approve + actual price + qty + limit price
     python approve.py no  42             # Reject rec #42
     python approve.py close 42           # Close position #42 (fetch price auto)
     python approve.py close 42 40.20     # Close position #42 at ₪40.20
@@ -170,8 +171,24 @@ def show_performance(summary):
 
 # -- Action handlers -----------------------------------------------------------
 
-def do_approve(rec_id: int, price_str: str = None, qty_str: str = None):
-    from src.db.recommendations_db import update_approval, get_pending_recs
+def do_approve(
+    rec_id: int,
+    price_str: str = None,
+    qty_str: str = None,
+    limit_str: str = None,
+) -> None:
+    """Approve a recommendation and optionally record execution details.
+
+    Args:
+        rec_id: DB id of the recommendation to approve.
+        price_str: Actual trade execution price as a string (e.g. '38.50').
+            If None, prompts interactively.
+        qty_str: Number of units traded as a string (e.g. '100').
+            If None, prompts interactively when price_str is given.
+        limit_str: Limit order entry price as a string (e.g. '2650').
+            If None, prompts interactively. Stored as price_limit on the rec.
+    """
+    from src.db.recommendations_db import update_approval, set_price_limit
     from src.models.recommendation import ApprovalUpdate
 
     actual_price = None
@@ -188,6 +205,14 @@ def do_approve(rec_id: int, price_str: str = None, qty_str: str = None):
             quantity = int(qty_str)
         except ValueError:
             print(f"  [NO] Invalid quantity: {qty_str}")
+            return
+
+    price_limit = None
+    if limit_str:
+        try:
+            price_limit = float(limit_str.replace("₪","").replace(",",""))
+        except ValueError:
+            print(f"  [NO] Invalid limit price: {limit_str}")
             return
 
     # Interactive: ask for price if not provided (skip if stdin is not a tty)
@@ -214,6 +239,17 @@ def do_approve(rec_id: int, price_str: str = None, qty_str: str = None):
             except ValueError:
                 pass
 
+    if price_limit is None:
+        try:
+            val = input(f"  Limit order entry price for #{rec_id} (Enter to skip): ").strip()
+        except EOFError:
+            val = ""
+        if val:
+            try:
+                price_limit = float(val.replace("₪","").replace(",",""))
+            except ValueError:
+                print("  [WARN] Invalid limit price — skipping")
+
     try:
         note = input(f"  Note (optional, Enter to skip): ").strip()
     except EOFError:
@@ -226,14 +262,19 @@ def do_approve(rec_id: int, price_str: str = None, qty_str: str = None):
         quantity     = quantity,
         note         = note
     )
-    from src.db.recommendations_db import update_approval
     update_approval(update)
+
+    if price_limit is not None:
+        set_price_limit(rec_id, price_limit)
+
     print(f"\n  [OK] Recommendation #{rec_id} APPROVED")
     if actual_price:
         print(f"     Traded at: {fmt_price(actual_price)}", end="")
         if quantity:
             print(f"  ×  {quantity:,} units", end="")
         print()
+    if price_limit is not None:
+        print(f"     Limit price: ₪{price_limit:,.2f}")
     print()
 
 
@@ -356,7 +397,8 @@ def interactive_mode():
                         continue
                     if action in ("yes", "y", "approve"):
                         do_approve(rec_id, parts[2] if len(parts)>2 else None,
-                                           parts[3] if len(parts)>3 else None)
+                                           parts[3] if len(parts)>3 else None,
+                                           parts[4] if len(parts)>4 else None)
                     elif action in ("no", "n", "reject"):
                         do_reject(rec_id)
                     else:
@@ -443,11 +485,12 @@ def main():
 
     elif cmd in ("yes", "y", "approve"):
         if len(args) < 2:
-            print("  Usage: python approve.py yes <id> [price] [qty]")
+            print("  Usage: python approve.py yes <id> [price] [qty] [limit]")
             sys.exit(1)
         do_approve(int(args[1]),
                    args[2] if len(args) > 2 else None,
-                   args[3] if len(args) > 3 else None)
+                   args[3] if len(args) > 3 else None,
+                   args[4] if len(args) > 4 else None)
 
     elif cmd in ("no", "n", "reject"):
         if len(args) < 2:
@@ -681,7 +724,7 @@ def main():
         cur = conn.cursor()
         cur.execute(
             "SELECT id, symbol, action, conviction, approved, closed, "
-            "price_actual, approval_note FROM recommendations ORDER BY id"
+            "price_actual, price_limit, approval_note FROM recommendations ORDER BY id"
         )
         rows = cur.fetchall()
         conn.close()
@@ -690,15 +733,16 @@ def main():
             print("\n  No recommendations in DB.\n")
         else:
             print(f"\n  {'ID':>4}  {'Symbol':<12} {'Action':<6} {'Conv':<8} "
-                  f"{'Appr':>5} {'Clsd':>4}  {'Price':>12}  Note")
+                  f"{'Appr':>5} {'Clsd':>4}  {'Actual':>12}  {'Limit':>10}  Note")
             print(f"  {'-'*4}  {'-'*12} {'-'*6} {'-'*8} "
-                  f"{'-'*5} {'-'*4}  {'-'*12}  {'-'*40}")
+                  f"{'-'*5} {'-'*4}  {'-'*12}  {'-'*10}  {'-'*40}")
             for r in rows:
-                note = (r["approval_note"] or "")[:60].replace("\n", " ")
-                price = f"\u20aa{r['price_actual']:,.2f}" if r["price_actual"] else "—"
+                note = (r["approval_note"] or "")[:55].replace("\n", " ")
+                price  = f"\u20aa{r['price_actual']:,.2f}" if r["price_actual"] else "—"
+                limit  = f"\u20aa{r['price_limit']:,.2f}" if r["price_limit"]  else "—"
                 print(f"  {r['id']:>4}  {r['symbol']:<12} {r['action']:<6} "
                       f"{r['conviction']:<8} {str(r['approved']):>5} "
-                      f"{str(r['closed']):>4}  {price:>12}  {note}")
+                      f"{str(r['closed']):>4}  {price:>12}  {limit:>10}  {note}")
             print()
 
     else:

@@ -212,14 +212,17 @@ def _build_context(
     # rejected — closing the Karpathy feedback loop without any schema changes.
     _history = get_decision_history(n_weeks=4)
     if _history:
-        _hist_lines = "\n".join(
-            f'  <decision ticker="{r["symbol"]}" action="{r["action"]}" '
-            f'verdict="{"APPROVED" if r["approved"] == 1 else "REJECTED"}" '
-            f'date="{r["created_at"][:10]}">\n'
-            f'    {r["approval_note"] or "(no note)"}\n'
-            f'  </decision>'
-            for r in _history
-        )
+        def _decision_xml(r: dict) -> str:
+            """Format one decision history row as an XML element."""
+            limit_attr = f' limit="{r["price_limit"]:.2f}"' if r.get("price_limit") else ""
+            verdict = "APPROVED" if r["approved"] == 1 else "REJECTED"
+            return (
+                f'  <decision ticker="{r["symbol"]}" action="{r["action"]}" '
+                f'verdict="{verdict}"{limit_attr} date="{r["created_at"][:10]}">\n'
+                f'    {r["approval_note"] or "(no note)"}\n'
+                f'  </decision>'
+            )
+        _hist_lines = "\n".join(_decision_xml(r) for r in _history)
         decision_history_block = (
             f"\n<decision_history>\n{_hist_lines}\n</decision_history>"
         )
