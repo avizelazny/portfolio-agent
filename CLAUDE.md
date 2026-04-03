@@ -281,7 +281,7 @@ Rule going forward: Any tunable investment parameter (target return, CPI assumpt
 | Phase Bug Review | ✅ Complete (2026-03-29) | Full codebase sweep — 14 files fixed, 18 bugs resolved |
 | Phase 2 | 🔜 Planned | AWS ECS + EventBridge + SES deployment, PostgreSQL + pgvector, Docker |
 
-**Current focus:** price_limit field on rec (#18). Data inputs track (#7–12). AWS deployment (#14).
+**Current focus:** price_limit field on rec (#17). Data inputs track (#7–12). AWS deployment (#14).
 
 ---
 
@@ -304,9 +304,8 @@ Rule going forward: Any tunable investment parameter (target return, CPI assumpt
 | 13 | Infra/UX | 6-step evaluator widget in dashboard |
 | 14 | Infra/UX | AWS ECS + EventBridge + SES deployment |
 | 15 | Infra/UX | ✅ DONE (prior session) — src/connectors/live_prices.py exists with fetch_live_prices() and format_live_prices_for_prompt(). Called in dashboard.py before generate_report(), injected as <live_prices> XML block in _build_context(). Fetches top movers from TA-125 universe via yfinance. Fund IDs skipped gracefully. |
-| 16 | Agent | Apply updated SYSTEM_PROMPT — 11% nominal target, favour conviction, no unnecessary HOLDs (file: `updated_system_prompt.py`) |
-| 17 | Agent | ✅ DONE (prior session) — build_system_prompt() reads hurdle_rate_pct from portfolio.yaml at runtime. Conviction-first, no unnecessary HOLDs, underperformance framed as risk. updated_system_prompt.py was never needed — mandate-driven prompt was built directly into agent_core.py. |
-| 18 | Infra/UX | `price_limit` field on recommendation record — store the limit order entry price the user sets, so expired limits leave a trace in the DB. Currently this lives only in portfolio.yaml pending_orders and disappears when the order is cancelled. |
+| 16 | Agent | ✅ DONE (prior session) — build_system_prompt() reads hurdle_rate_pct from portfolio.yaml at runtime. Conviction-first, no unnecessary HOLDs, underperformance framed as risk. updated_system_prompt.py was never needed — mandate-driven prompt was built directly into agent_core.py. |
+| 17 | Infra/UX | `price_limit` field on recommendation record — store the limit order entry price the user sets, so expired limits leave a trace in the DB. Currently this lives only in portfolio.yaml pending_orders and disappears when the order is cancelled. |
 
 ---
 
