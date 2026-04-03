@@ -160,6 +160,7 @@ What happened: yfinance fetch for TA-35 returned 404 errors.
 Root cause: Used `^TA35.TA` (US-style caret prefix) instead of `TA35.TA`.
 Fix: Remove the caret. US indices use `^GSPC` style; TASE indices do not.
 Rule going forward: TASE tickers are always `TICKER.TA` with no caret. E.g. `TA35.TA`, `TA125.TA`, `TEVA.TA`.
+**Repeat offender:** Found caret violations again in `tase.py` (`^TA35`, `^TA90`, `^TA125`) and `macro_connector.py` (`^TA125.TA`) during the 2026-03-29 review. When adding any new yfinance call for a TASE index, grep for `\^TA` before committing.
 
 #### 2026-03-13 — funder.co.il rate-limits rapid NAV fetches
 What happened: `price_updater.py` timed out when fetching multiple fund NAVs in quick succession.
@@ -222,6 +223,42 @@ Rule going forward: Never assume SQLite returns typed values. Strings need `strp
 What happened: `approve.py` completed silently but wrote nothing — no way to tell it had targeted the wrong DB.
 Rule going forward: Any script that reads or writes the DB prints `[DB] <path>` on startup. Silent success is indistinguishable from silent failure.
 
+#### 2026-03-29 — openpyxl workbooks must be closed in try/finally on Windows
+What happened: `discount_parser.py`, `transaction_parser.py` held open Excel file handles after parsing.
+Root cause: openpyxl `load_workbook()` opens a file handle that is not released on exception. Windows locks the file, blocking subsequent reads or writes.
+Fix: Wrap the entire parse body in `try/finally: wb.close()`.
+Rule going forward: Every `openpyxl.load_workbook()` call must be paired with `wb.close()` in a `finally` block. No exceptions.
+
+#### 2026-03-29 — `datetime.utcnow()` is deprecated in Python 3.12
+What happened: Multiple files used `datetime.utcnow()`, which emits `DeprecationWarning` in Python 3.12 and will be removed.
+Fix: Replace with `datetime.now(timezone.utc).replace(tzinfo=None)` for a naive UTC datetime (SQLite-compatible), or `datetime.now(timezone.utc)` when a tz-aware object is needed.
+Rule going forward: Never use `datetime.utcnow()`. Always import `timezone` from `datetime` and use `datetime.now(timezone.utc)`.
+
+#### 2026-03-29 — sqlite3.Row → dict: use `dict(r)`, never `dict(zip(col_names, r))`
+What happened: `trade_matcher.py` built dicts with `dict(zip(["id", "symbol", ...], r))`, hardcoding column order.
+Root cause: If the SELECT column list ever changes order, the zip produces silently wrong mappings.
+Fix: Set `conn.row_factory = sqlite3.Row` (already done in `get_connection()`) and convert with `dict(r)`. sqlite3.Row supports key-based access, so `dict(r)` is always correct regardless of query order.
+Rule going forward: Never use `dict(zip(col_list, row))`. Always use `dict(r)` when `row_factory = sqlite3.Row` is set.
+
+#### 2026-03-29 — f-string `:+` format spec crashes on string fallback values
+What happened: `agent_core.py` formatted index performance as `{change_pct:+}%` with a fallback of `'N/A'`. When data was unavailable the fallback string hit the `:+` format spec, raising `ValueError: Sign not allowed in string format specification`.
+Fix: Pre-extract the value, then conditionally format: `f"{v:+.2f}" if v is not None else "N/A"`.
+Rule going forward: Never apply numeric format specs (`:+`, `:.2f`, `:,`) to variables that might be strings. Always pre-extract and branch.
+
+#### 2026-03-29 — File uploads must use `secure_filename()` to prevent path traversal
+What happened: `dashboard.py` `api_upload` saved user-supplied filenames directly to disk without sanitisation.
+Root cause: A filename like `../../etc/passwd` or `../app.py` would write outside the upload directory.
+Fix: `from werkzeug.utils import secure_filename; safe_name = secure_filename(f.filename)`.
+Rule going forward: Any route that accepts a file upload must call `secure_filename()` before constructing the save path. Never trust `f.filename` directly.
+
+#### 2026-03-29 — SQLite datetime bug propagates: check ALL callers of `created_at`
+What happened: The "SQLite returns strings" lesson (2026-03-25) was applied to `approve.py` but the same pattern recurred in `price_updater.py` (`.replace(tzinfo=None)` on a string) and `snapshot_runner.py` (`.tzinfo` attribute access on a string).
+Rule going forward: Whenever new code reads a datetime column from SQLite, immediately wrap it in `strptime`. Search for `.tzinfo`, `.replace(tzinfo`, `.strftime` on variables sourced from DB rows — each is a latent crash.
+
+#### 2026-03-29 — All YAML and DB paths must be `__file__`-anchored — repeat offender
+What happened: CWD-relative `"portfolio.yaml"` calls found in `approve.py` (orders command), `dashboard.py` (background run), `demo_run.py` (load_universes), and `agent_core.py` (`load_pending_orders`, `load_mandate`).
+Rule going forward: Any time a new function opens `portfolio.yaml` or any project file, the first line of the path construction must be `Path(__file__).resolve().parent...`. Never use bare string literals for project-relative paths.
+
 #### 2026-03-25 — Investment mandate is config, not hardcode
 What happened: Decided not to hardcode the 10% nominal target in `agent_core.py` or the scorer.
 Decision: All mandate values live in `portfolio.yaml` under the `mandate:` block.
@@ -241,6 +278,7 @@ Rule going forward: Any tunable investment parameter (target return, CPI assumpt
 |---|---|---|
 | Phase 1 | ✅ Complete | Core agent, TASE data, quant engine, HTML reports, dashboard, approve.py |
 | Phase A+B | ✅ Complete | Feedback system — recommendation scoring, rejection history, hit-rate tracking |
+| Phase Bug Review | ✅ Complete (2026-03-29) | Full codebase sweep — 14 files fixed, 18 bugs resolved |
 | Phase 2 | 🔜 Planned | AWS ECS + EventBridge + SES deployment, PostgreSQL + pgvector, Docker |
 
 **Current focus:** Recommendation scorer (#1, #2) using `hurdle_rate_pct` from `portfolio.yaml`. SYSTEM_PROMPT mandate update (#17).
@@ -267,6 +305,7 @@ Rule going forward: Any tunable investment parameter (target return, CPI assumpt
 | 14 | Infra/UX | AWS ECS + EventBridge + SES deployment |
 | 15 | Infra/UX | Live stock prices in Claude context for entry guidance |
 | 16 | Agent | Apply updated SYSTEM_PROMPT — 11% nominal target, favour conviction, no unnecessary HOLDs (file: `updated_system_prompt.py`) |
+| 18 | Infra/UX | `price_limit` field on recommendation record — store the limit order entry price the user sets, so expired limits leave a trace in the DB. Currently this lives only in portfolio.yaml pending_orders and disappears when the order is cancelled. |
 
 ---
 
